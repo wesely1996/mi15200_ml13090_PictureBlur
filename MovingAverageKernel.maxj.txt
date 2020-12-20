@@ -1,0 +1,70 @@
+/**
+ * Document: Picture Blure
+ * Summary:
+ *       Takes a picture and uses the average value of the bits around each bit
+ *and sets that average to the bit as its new value.
+ */
+package movingaverage;
+
+import com.maxeler.maxcompiler.v2.kernelcompiler.Kernel;
+import com.maxeler.maxcompiler.v2.kernelcompiler.KernelParameters;
+import com.maxeler.maxcompiler.v2.kernelcompiler.types.base.DFEVar;
+
+class MovingAverageKernel extends Kernel {
+
+	MovingAverageKernel(KernelParameters parameters) {
+		super(parameters);
+
+		// Input
+		DFEVar x = io.input("x", dfeFloat(8, 24));
+
+        //total pixture size in bits
+		DFEVar size = io.scalarInput("size", dfeUInt(32));
+
+		// Control
+		DFEVar count = control.count.simpleCounter(32, size);
+
+		DFEVar aboveLowerBound = count > 4;
+		DFEVar belowUpperBound = count < size - 5;
+
+        //Data
+        //check if we have values for it or is it out of bounds
+        //we moved the stream.offset into the Ternary conditional as to stop access to memmory we should not access
+        DFEVar previous_by_Rn = aboveLowerBound ? stream.offset(x, -5) : 0;
+        DFEVar previous_by_R = aboveLowerBound ? stream.offset(x, -4) : 0;
+        DFEVar previous_by_Rp = aboveLowerBound ? stream.offset(x, -3) : 0;
+		DFEVar previous_by_1 = aboveLowerBound ? stream.offset(x, -1) : 0;
+		DFEVar next_by_1 = belowUpperBound ? stream.offset(x, 1) : 0;
+		DFEVar next_by_Rn = belowUpperBound ? stream.offset(x, 3) : 0;
+		DFEVar next_by_R = belowUpperBound ? stream.offset(x, 4) : 0;
+		DFEVar next_by_Rp = belowUpperBound ? stream.offset(x, 5) : 0;
+		
+		//Check if its an edge or not
+		DFEVar top_edge = (previous_by_R===0) & (previous_by_Rn===0) & (previous_by_Rp===0);
+		DFEVar bottom_edge = (next_by_R===0) & (next_by_Rn===0) & (next_by_Rp===0);
+		DFEVar left_edge = (previous_by_Rn===0) & (previous_by_1===0) & (next_by_Rn===0);
+		DFEVar right_edge = (previous_by_Rp===0) & (next_by_1===0) & (next_by_Rp===0);
+		
+		//Check for corners
+		DFEVar top_left = top_edge & left_edge;
+		DFEVar top_right = top_edge & right_edge;
+		DFEVar bottom_left = bottom_edge & left_edge;
+		DFEVar bottom_right = bottom_edge & right_edge;
+		
+		DFEVar corner = top_left | top_right | bottom_left | bottom_right;
+		DFEVar edge = top_edge | bottom_edge | left_edge | right_edge;
+		DFEVar inside = ~edge & ~corner;
+		
+		//by what we devide is determined if its a corner, edge or inner pixel
+		DFEVar divisor1 = edge ? constant.var(dfeFloat(8, 24), 6) : 0;
+		DFEVar divisor2 = corner ? constant.var(dfeFloat(8, 24), 4) : 0;
+		DFEVar divisor3 = inside ? constant.var(dfeFloat(8, 24), 9) : 0;
+		
+		DFEVar divisor = divisor1 + divisor2 + divisor3;
+		
+		DFEVar sum = previous_by_Rn + previous_by_R + previous_by_Rp + previous_by_1 + x + next_by_1 + next_by_Rn + next_by_R + next_by_Rp;
+		DFEVar result = sum / divisor;
+
+		io.output("y", result, dfeFloat(8, 24));
+	}
+}
